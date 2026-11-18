@@ -113,6 +113,23 @@ async def classement_vocal(ctx):
         message += f"**{index}.** {nom} — `{formater_temps(secondes)}`\n"
 
     await ctx.send(message)
+from flask import Flask
+import threading
 
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Je suis vivant !"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = threading.Thread(target=run)
+    t.start()
+
+# Lance le serveur web en même temps que le bot
+keep_alive()
 # Lancement du bot
 bot.run(TOKEN)
