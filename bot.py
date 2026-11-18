@@ -2,8 +2,14 @@ import discord
 from discord.ext import commands
 import time
 import json
-import os
-from dotenv import load_dotenv  # Optionnel si tu utilises un fichier .env en local
+import discord
+from discord.ext import commands
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # Récupère le token sécurisé depuis Render ou les variables d'environnement
 TOKEN = os.getenv("DISCORD_TOKEN")
