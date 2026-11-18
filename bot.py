@@ -6,7 +6,13 @@ from flask import Flask
 import discord
 from discord.ext import commands
 from discord import app_commands
+import logging
 
+app = Flask('')
+
+# Désactive l'affichage du message "development server" dans les logs
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 # --- SERVEUR WEB FLASK (POUR RENDER 24/7) ---
 app = Flask('')
 
