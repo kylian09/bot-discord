@@ -2,8 +2,6 @@ import discord
 from discord.ext import commands
 import time
 import json
-import discord
-from discord.ext import commands
 
 try:
     from dotenv import load_dotenv
