@@ -19,7 +19,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-FICHIER_DATA = "temps_vocal.json"
+FICHIER_DATA = "stats_vocal.json"
 sessions_actives = {} # Stocke l'heure d'arrivée en vocal : {user_id: timestamp}
 
 # --- Fonctions de sauvegarde ---
