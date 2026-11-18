@@ -92,8 +92,29 @@ async def voir_temps(ctx, membre: discord.Member = None):
 @bot.command(name="topvocal")
 async def classement_vocal(ctx):
     """Affiche le top 10 des utilisateurs les plus actifs en vocal"""
+    await ctx.defer()
+    
     donnees = charger_donnees()
     maintenant = time.time()
+
+    # On met à jour temporairement avec ceux qui sont actuellement connectés
+    for user_id, debut in sessions_actives.items():
+        donnees[user_id] = donnees.get(user_id, 0) + (maintenant - debut)
+
+    if not donnees:
+       await ctx.followup.send("Aucune donnée vocale enregistrée pour le moment.")
+        return
+
+    # Tri des utilisateurs par temps décroissant
+    classement = sorted(donnees.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    message = "🏆 **Classement du temps passé en vocal :**\n\n"
+    for index, (user_id, secondes) in enumerate(classement, start=1):
+        membre = ctx.guild.get_member(int(user_id))
+        nom = membre.display_name if membre else f"Utilisateur inconnu ({user_id})"
+        message += f"**{index}.** {nom} – `{formater_temps(secondes)}`\n"
+
+  await ctx.followup.send(message)
 
     # On met à jour temporairement avec ceux qui sont actuellement connectés
     for user_id, debut in sessions_actives.items():
