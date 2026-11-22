@@ -197,5 +197,5 @@ async def clear_cmd(interaction: discord.Interaction):
 # --- LANCEMENT ---
 if __name__ == "__main__":
     keep_alive()
-    TOKEN = os.environ.get("TOKEN")
+    TOKEN = os.environ.get("DISCORD_TOKEN")
     bot.run(TOKEN)
