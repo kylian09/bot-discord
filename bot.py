@@ -38,6 +38,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 FICHIER_STATS = "stats_vocal.json"
 sessions_actives = {}
 
+# Mets ici l'ID (ou les IDs) de tes rôles haut gradés autorisés à faire /topvocal
+ROLES_AUTORISES = [123456789012345678]
+
 # --- FONCTIONS DE GESTION DES DONNÉES ---
 def charger_donnees():
     if os.path.exists(FICHIER_STATS):
@@ -62,6 +65,13 @@ def formater_temps(secondes):
         return f"{minutes}m {sec}s"
     else:
         return f"{sec}s"
+
+def a_acces_topvocal(interaction: discord.Interaction) -> bool:
+    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+        return False
+    if interaction.user.guild_permissions.administrator:
+        return True
+    return any(role.id in ROLES_AUTORISES for role in interaction.user.roles)
 
 # --- ÉVÉNEMENTS DU BOT ---
 @bot.event
@@ -122,6 +132,13 @@ async def time_cmd(interaction: discord.Interaction, membre: discord.Member = No
 
 @bot.tree.command(name="topvocal", description="Affiche le top 10 des utilisateurs les plus actifs en vocal")
 async def topvocal_cmd(interaction: discord.Interaction):
+    if not a_acces_topvocal(interaction):
+        await interaction.response.send_message(
+            "❌ Cette commande est réservée aux hauts gradés.",
+            ephemeral=True
+        )
+        return
+
     await interaction.response.defer()
     
     donnees = charger_donnees()
@@ -151,7 +168,6 @@ async def all_cmd(interaction: discord.Interaction):
     donnees = charger_donnees()
     maintenant = time.time()
 
-    # Ajoute les sessions actives en direct
     for user_id, debut in sessions_actives.items():
         donnees[user_id] = donnees.get(user_id, 0) + (maintenant - debut)
 
@@ -167,7 +183,6 @@ async def all_cmd(interaction: discord.Interaction):
         nom = membre.display_name if membre else f"Utilisateur inconnu ({user_id})"
         lignes.append(f"**{index}.** {nom} – `{formater_temps(secondes)}`")
 
-    # Envoi découpé par paquets pour respecter la limite de 2000 caractères de Discord
     message_courant = ""
     for ligne in lignes:
         if len(message_courant) + len(ligne) + 1 > 1900:
@@ -179,20 +194,76 @@ async def all_cmd(interaction: discord.Interaction):
     if message_courant:
         await interaction.followup.send(message_courant)
 
-@bot.tree.command(name="clear", description="Remet à 0 les heures de vocal de tout le monde")
+@bot.tree.command(name="clear", description="Remet à 0 les heures de vocal de tout le monde (Administrateurs uniquement)")
 @app_commands.default_permissions(administrator=True)
 async def clear_cmd(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ Seuls les administrateurs peuvent utiliser cette commande.",
+            ephemeral=True
+        )
+        return
+
     await interaction.response.defer()
 
-    # Vide le fichier JSON
     sauvegarder_donnees({})
 
-    # Remet à zéro le chrono de ceux qui sont actuellement connectés en vocal sans casser leur suivi
     maintenant = time.time()
     for user_id in list(sessions_actives.keys()):
         sessions_actives[user_id] = maintenant
 
     await interaction.followup.send("🔄 **Toutes les heures de vocal ont été remises à 0 !**")
+
+@bot.tree.command(name="ajt", description="Ajoute du temps vocal à un membre (Administrateurs uniquement)")
+@app_commands.describe(
+    membre="Le membre à qui ajouter du temps vocal",
+    minutes="Nombre de minutes à ajouter (ex: 30)",
+    heures="Nombre d'heures à ajouter (optionnel, ex: 1)"
+)
+@app_commands.default_permissions(administrator=True)
+async def ajt_cmd(
+    interaction: discord.Interaction,
+    membre: discord.Member,
+    minutes: int = 0,
+    heures: int = 0
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ Seuls les administrateurs peuvent utiliser cette commande.",
+            ephemeral=True
+        )
+        return
+
+    if minutes < 0 or heures < 0:
+        await interaction.response.send_message(
+            "❌ Les heures et les minutes doivent être positives.",
+            ephemeral=True
+        )
+        return
+
+    secondes_a_ajouter = (heures * 3600) + (minutes * 60)
+    if secondes_a_ajouter <= 0:
+        await interaction.response.send_message(
+            "❌ Indique au moins un nombre de minutes ou d'heures supérieur à 0.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer()
+
+    user_id_str = str(membre.id)
+    donnees = charger_donnees()
+    donnees[user_id_str] = donnees.get(user_id_str, 0) + secondes_a_ajouter
+    sauvegarder_donnees(donnees)
+
+    total_actuel = donnees[user_id_str]
+    if user_id_str in sessions_actives:
+        total_actuel += (time.time() - sessions_actives[user_id_str])
+
+    await interaction.followup.send(
+        f"✅ **{formater_temps(secondes_a_ajouter)}** ajouté(s) à **{membre.display_name}**.\n"
+        f"⏱️ Nouveau total : **{formater_temps(total_actuel)}**."
+    )
 
 # --- LANCEMENT ---
 if __name__ == "__main__":
