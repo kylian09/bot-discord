@@ -39,7 +39,7 @@ FICHIER_STATS = "stats_vocal.json"
 sessions_actives = {}
 
 # Mets ici l'ID (ou les IDs) de tes rôles haut gradés autorisés à faire /topvocal
-ROLES_AUTORISES = [123456789012345678]
+ROLES_AUTORISES = [1548727372138938464]
 
 # --- FONCTIONS DE GESTION DES DONNÉES ---
 def charger_donnees():
