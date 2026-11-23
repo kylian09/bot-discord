@@ -1,87 +1,71 @@
-import os
+import discord
+from discord import app_commands
+from discord.ext import commands
 import json
 import time
-import logging
-from threading import Thread
+import os
 from flask import Flask
-import discord
-from discord.ext import commands
-from discord import app_commands
+from threading import Thread
 
-# --- SERVEUR WEB FLASK (POUR RENDER 24/7) ---
+# --- SERVEUR WEB POUR RENDER (24/7) ---
 app = Flask('')
-
-# Masque les warnings du serveur de développement dans les logs Render
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
 
 @app.route('/')
 def home():
-    return "Le bot vocal est en ligne !"
+    return "Le bot est en ligne !"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+def run():
+    app.run(host='0.0.0.0', port=8080)
 
-def keep_alive():
-    t = Thread(target=run_flask)
+def garder_en_vie():
+    t = Thread(target=run)
     t.start()
 
-# --- CONFIGURATION DU BOT DISCORD ---
+# --- CONFIGURATION DU BOT ---
 intents = discord.Intents.default()
-intents.members = True
 intents.voice_states = True
-intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 FICHIER_STATS = "stats_vocal.json"
-sessions_actives = {}
 
-# Mets ici l'ID (ou les IDs) de tes rôles haut gradés autorisés à faire /topvocal
-ROLES_AUTORISES = [1548727372138938464]
+# Tes 4 rôles autorisés pour les commandes staff/admin
+ROLES_AUTORISES = [
+    1548727369693401158,
+    1548727368338645243,
+    1548732386009817309,
+    1548727366128509048
+]
 
-# --- FONCTIONS DE GESTION DES DONNÉES ---
-def charger_donnees():
+# Fonction de vérification des permissions
+def a_la_permission(member: discord.Member) -> bool:
+    return any(role.id in ROLES_AUTORISES for role in member.roles)
+
+# --- GESTION DES DONNÉES VOCALES ---
+sessions_actives = {}  # {user_id: timestamp_debut}
+
+def charger_stats():
     if os.path.exists(FICHIER_STATS):
-        try:
-            with open(FICHIER_STATS, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            return {}
+        with open(FICHIER_STATS, "r") as f:
+            return json.load(f)
     return {}
 
-def sauvegarder_donnees(donnees):
-    with open(FICHIER_STATS, "w", encoding="utf-8") as f:
-        json.dump(donnees, f, indent=4)
+def sauvegarder_stats(stats):
+    with open(FICHIER_STATS, "w") as f:
+        json.dump(stats, f, indent=4)
 
 def formater_temps(secondes):
     secondes = int(secondes)
     heures, reste = divmod(secondes, 3600)
     minutes, sec = divmod(reste, 60)
-    if heures > 0:
-        return f"{heures}h {minutes}m {sec}s"
-    elif minutes > 0:
-        return f"{minutes}m {sec}s"
-    else:
-        return f"{sec}s"
+    return f"{heures}h {minutes}m {sec}s"
 
-def a_acces_topvocal(interaction: discord.Interaction) -> bool:
-    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
-        return False
-    if interaction.user.guild_permissions.administrator:
-        return True
-    return any(role.id in ROLES_AUTORISES for role in interaction.user.roles)
-
-# --- ÉVÉNEMENTS DU BOT ---
+# --- ÉVÉNEMENTS ---
 @bot.event
 async def on_ready():
+    await bot.tree.sync()
     print(f"Connecté en tant que {bot.user}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synchronisé {len(synced)} commande(s) slash.")
-    except Exception as e:
-        print(f"Erreur lors de la synchronisation : {e}")
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -90,183 +74,116 @@ async def on_voice_state_update(member, before, after):
 
     user_id = str(member.id)
     maintenant = time.time()
-
-    etait_actif = before.channel is not None and not before.self_mute and not before.mute
-    est_actif = after.channel is not None and not after.self_mute and not after.mute
+    stats = charger_stats()
 
     # Rejoint un vocal ou se démute
-    if not etait_actif and est_actif:
-        sessions_actives[user_id] = maintenant
+    if after.channel is not None and not after.self_mute and not after.mute:
+        if user_id not in sessions_actives:
+            sessions_actives[user_id] = maintenant
 
-    # Quitte un vocal ou se mute
-    elif etait_actif and not est_actif:
+    # Quitte le vocal ou se mute
+    elif after.channel is None or after.self_mute or after.mute:
         if user_id in sessions_actives:
-            debut = sessions_actives.pop(user_id)
-            duree = maintenant - debut
-            donnees = charger_donnees()
-            donnees[user_id] = donnees.get(user_id, 0) + duree
-            sauvegarder_donnees(donnees)
+            duree = maintenant - sessions_actives.pop(user_id)
+            stats[user_id] = stats.get(user_id, 0) + duree
+            sauvegarder_stats(stats)
 
-# --- COMMANDES SLASH (/) ---
-@bot.tree.command(name="time", description="Affiche le temps passé en vocal (le tien ou celui d'un autre membre)")
-@app_commands.describe(membre="Le membre dont tu veux voir le temps (laisse vide pour toi)")
+# --- COMMANDES SLASH ---
+
+# 1. /topvocal (Accessible à TOUT LE MONDE - aucune restriction)
+@bot.tree.command(name="topvocal", description="Affiche le classement des 10 membres les plus actifs en vocal")
+async def topvocal_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    stats = charger_stats()
+    maintenant = time.time()
+
+    # Ajoute le temps des sessions en cours sans écraser le fichier
+    temps_totaux = stats.copy()
+    for uid, debut in sessions_actives.items():
+        temps_totaux[uid] = temps_totaux.get(uid, 0) + (maintenant - debut)
+
+    if not temps_totaux:
+        await interaction.followup.send("Aucune donnée vocale enregistrée pour le moment.")
+        return
+
+    classement = sorted(temps_totaux.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    embed = discord.Embed(title="🏆 Top 10 Activité Vocale", color=discord.Color.gold())
+    description = ""
+    for index, (uid, total_sec) in enumerate(classement, start=1):
+        description += f"**{index}.** <@{uid}> — `{formater_temps(total_sec)}`\n"
+
+    embed.description = description
+    await interaction.followup.send(embed=embed)
+
+# 2. /time (Accessible à TOUT LE MONDE)
+@bot.tree.command(name="time", description="Affiche ton temps vocal ou celui d'un membre")
 async def time_cmd(interaction: discord.Interaction, membre: discord.Member = None):
     await interaction.response.defer()
-    
+
     cible = membre or interaction.user
-    user_id_str = str(cible.id)
-    
-    donnees = charger_donnees()
-    maintenant = time.time()
+    uid = str(cible.id)
+    stats = charger_stats()
+    total = stats.get(uid, 0)
 
-    total_secondes = donnees.get(user_id_str, 0)
+    if uid in sessions_actives:
+        total += time.time() - sessions_actives[uid]
 
-    if user_id_str in sessions_actives:
-        debut = sessions_actives[user_id_str]
-        total_secondes += (maintenant - debut)
+    await interaction.followup.send(f"⏱️ Temps vocal de **{cible.display_name}** : `{formater_temps(total)}`")
 
-    if total_secondes == 0:
-        await interaction.followup.send(f"⏱️ **{cible.display_name}** n'a pas encore passé de temps en vocal.")
-    else:
-        await interaction.followup.send(f"⏱️ **{cible.display_name}** a passé **{formater_temps(total_secondes)}** en vocal.")
-
-@bot.tree.command(name="topvocal", description="Affiche le top 10 des utilisateurs les plus actifs en vocal")
-async def topvocal_cmd(interaction: discord.Interaction):
-    if not a_acces_topvocal(interaction):
-        await interaction.response.send_message(
-            "❌ Cette commande est réservée aux hauts gradés.",
-            ephemeral=True
-        )
-        return
-
-    await interaction.response.defer()
-    
-    donnees = charger_donnees()
-    maintenant = time.time()
-
-    for user_id, debut in sessions_actives.items():
-        donnees[user_id] = donnees.get(user_id, 0) + (maintenant - debut)
-
-    if not donnees:
-        await interaction.followup.send("Aucune donnée vocale enregistrée pour le moment.")
-        return
-
-    classement = sorted(donnees.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    message = "🏆 **Top 10 du temps passé en vocal :**\n\n"
-    for index, (user_id, secondes) in enumerate(classement, start=1):
-        membre = interaction.guild.get_member(int(user_id))
-        nom = membre.display_name if membre else f"Utilisateur inconnu ({user_id})"
-        message += f"**{index}.** {nom} – `{formater_temps(secondes)}`\n"
-
-    await interaction.followup.send(message)
-
-@bot.tree.command(name="all", description="Affiche le temps passé en vocal de absolument tout le monde")
+# 3. /all (RESTREINT aux 4 rôles)
+@bot.tree.command(name="all", description="Affiche le temps vocal de tous les membres enregistrés")
 async def all_cmd(interaction: discord.Interaction):
+    if not a_la_permission(interaction.user):
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+
     await interaction.response.defer()
+    stats = charger_stats()
+    maintenant = time.time()
+
+    temps_totaux = stats.copy()
+    for uid, debut in sessions_actives.items():
+        temps_totaux[uid] = temps_totaux.get(uid, 0) + (maintenant - debut)
+
+    if not temps_totaux:
+        await interaction.followup.send("Aucune donnée enregistrée.")
+        return
+
+    classement = sorted(temps_totaux.items(), key=lambda x: x[1], reverse=True)
+    lignes = [f"<@{uid}> : `{formater_temps(sec)}`" for uid, sec in classement]
     
-    donnees = charger_donnees()
-    maintenant = time.time()
+    embed = discord.Embed(title="📊 Temps vocal de tous les membres", description="\n".join(lignes[:25]), color=discord.Color.blue())
+    await interaction.followup.send(embed=embed)
 
-    for user_id, debut in sessions_actives.items():
-        donnees[user_id] = donnees.get(user_id, 0) + (maintenant - debut)
-
-    if not donnees:
-        await interaction.followup.send("Aucune donnée vocale enregistrée pour le moment.")
+# 4. /ajt (RESTREINT aux 4 rôles)
+@bot.tree.command(name="ajt", description="Ajoute ou retire des minutes à un membre")
+async def ajt_cmd(interaction: discord.Interaction, membre: discord.Member, minutes: int):
+    if not a_la_permission(interaction.user):
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
         return
 
-    classement = sorted(donnees.items(), key=lambda x: x[1], reverse=True)
+    await interaction.response.defer()
+    stats = charger_stats()
+    uid = str(membre.id)
+    stats[uid] = max(0, stats.get(uid, 0) + (minutes * 60))
+    sauvegarder_stats(stats)
 
-    lignes = ["📊 **Temps vocal de tous les membres :**\n"]
-    for index, (user_id, secondes) in enumerate(classement, start=1):
-        membre = interaction.guild.get_member(int(user_id))
-        nom = membre.display_name if membre else f"Utilisateur inconnu ({user_id})"
-        lignes.append(f"**{index}.** {nom} – `{formater_temps(secondes)}`")
+    await interaction.followup.send(f"✅ **{minutes} minutes** modifiées pour **{membre.display_name}**. Nouveau total : `{formater_temps(stats[uid])}`")
 
-    message_courant = ""
-    for ligne in lignes:
-        if len(message_courant) + len(ligne) + 1 > 1900:
-            await interaction.followup.send(message_courant)
-            message_courant = ligne + "\n"
-        else:
-            message_courant += ligne + "\n"
-
-    if message_courant:
-        await interaction.followup.send(message_courant)
-
-@bot.tree.command(name="clear", description="Remet à 0 les heures de vocal de tout le monde (Administrateurs uniquement)")
-@app_commands.default_permissions(administrator=True)
+# 5. /clear (RESTREINT aux 4 rôles)
+@bot.tree.command(name="clear", description="Réinitialise toutes les statistiques vocales")
 async def clear_cmd(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "❌ Seuls les administrateurs peuvent utiliser cette commande.",
-            ephemeral=True
-        )
+    if not a_la_permission(interaction.user):
+        await interaction.response.send_message("❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True)
         return
 
     await interaction.response.defer()
-
-    sauvegarder_donnees({})
-
-    maintenant = time.time()
-    for user_id in list(sessions_actives.keys()):
-        sessions_actives[user_id] = maintenant
-
-    await interaction.followup.send("🔄 **Toutes les heures de vocal ont été remises à 0 !**")
-
-@bot.tree.command(name="ajt", description="Ajoute du temps vocal à un membre (Administrateurs uniquement)")
-@app_commands.describe(
-    membre="Le membre à qui ajouter du temps vocal",
-    minutes="Nombre de minutes à ajouter (ex: 30)",
-    heures="Nombre d'heures à ajouter (optionnel, ex: 1)"
-)
-@app_commands.default_permissions(administrator=True)
-async def ajt_cmd(
-    interaction: discord.Interaction,
-    membre: discord.Member,
-    minutes: int = 0,
-    heures: int = 0
-):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "❌ Seuls les administrateurs peuvent utiliser cette commande.",
-            ephemeral=True
-        )
-        return
-
-    if minutes < 0 or heures < 0:
-        await interaction.response.send_message(
-            "❌ Les heures et les minutes doivent être positives.",
-            ephemeral=True
-        )
-        return
-
-    secondes_a_ajouter = (heures * 3600) + (minutes * 60)
-    if secondes_a_ajouter <= 0:
-        await interaction.response.send_message(
-            "❌ Indique au moins un nombre de minutes ou d'heures supérieur à 0.",
-            ephemeral=True
-        )
-        return
-
-    await interaction.response.defer()
-
-    user_id_str = str(membre.id)
-    donnees = charger_donnees()
-    donnees[user_id_str] = donnees.get(user_id_str, 0) + secondes_a_ajouter
-    sauvegarder_donnees(donnees)
-
-    total_actuel = donnees[user_id_str]
-    if user_id_str in sessions_actives:
-        total_actuel += (time.time() - sessions_actives[user_id_str])
-
-    await interaction.followup.send(
-        f"✅ **{formater_temps(secondes_a_ajouter)}** ajouté(s) à **{membre.display_name}**.\n"
-        f"⏱️ Nouveau total : **{formater_temps(total_actuel)}**."
-    )
+    sessions_actives.clear()
+    sauvegarder_stats({})
+    await interaction.followup.send("🗑️ Toutes les statistiques vocales ont été remises à zéro.")
 
 # --- LANCEMENT ---
-if __name__ == "__main__":
-    keep_alive()
-    TOKEN = os.environ.get("DISCORD_TOKEN")
-    bot.run(TOKEN)
+garder_en_vie()
+bot.run(os.environ["DISCORD_TOKEN"])
