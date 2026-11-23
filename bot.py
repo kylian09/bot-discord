@@ -219,59 +219,6 @@ async def clear_cmd(interaction: discord.Interaction):
 
     await interaction.followup.send("🔄 **Toutes les heures de vocal ont été remises à 0 !**")
 
-@bot.tree.command(name="ajt", description="Ajoute du temps vocal à un membre (Administrateurs uniquement)")
+@bot.tree.command(name="ajt", description="Ajoute des heures ou des minutes de vocal à un membre (Administrateurs uniquement)")
 @app_commands.describe(
-    membre="Le membre à qui ajouter du temps vocal",
-    minutes="Nombre de minutes à ajouter (ex: 30)",
-    heures="Nombre d'heures à ajouter (optionnel, ex: 1)"
-)
-@app_commands.default_permissions(administrator=True)
-async def ajt_cmd(
-    interaction: discord.Interaction,
-    membre: discord.Member,
-    minutes: int = 0,
-    heures: int = 0
-):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "❌ Seuls les administrateurs peuvent utiliser cette commande.",
-            ephemeral=True
-        )
-        return
-
-    if minutes < 0 or heures < 0:
-        await interaction.response.send_message(
-            "❌ Les heures et les minutes doivent être positives.",
-            ephemeral=True
-        )
-        return
-
-    secondes_a_ajouter = (heures * 3600) + (minutes * 60)
-    if secondes_a_ajouter <= 0:
-        await interaction.response.send_message(
-            "❌ Indique au moins un nombre de minutes ou d'heures supérieur à 0.",
-            ephemeral=True
-        )
-        return
-
-    await interaction.response.defer()
-
-    user_id_str = str(membre.id)
-    donnees = charger_donnees()
-    donnees[user_id_str] = donnees.get(user_id_str, 0) + secondes_a_ajouter
-    sauvegarder_donnees(donnees)
-
-    total_actuel = donnees[user_id_str]
-    if user_id_str in sessions_actives:
-        total_actuel += (time.time() - sessions_actives[user_id_str])
-
-    await interaction.followup.send(
-        f"✅ **{formater_temps(secondes_a_ajouter)}** ajouté(s) à **{membre.display_name}**.\n"
-        f"⏱️ Nouveau total : **{formater_temps(total_actuel)}**."
-    )
-
-# --- LANCEMENT ---
-if __name__ == "__main__":
-    keep_alive()
-    TOKEN = os.environ.get("DISCORD_TOKEN")
-    bot.run(TOKEN)
+    membre="Le membre
