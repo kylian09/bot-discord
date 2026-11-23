@@ -199,9 +199,10 @@ async def all_cmd(interaction: discord.Interaction):
     if message_courant:
         await interaction.followup.send(message_courant)
 
-@bot.tree.command(name="clear", description="Remet à 0 les heures de vocal de tout le monde (Administrateurs uniquement)")
+@bot.tree.command(name="clear", description="Remet à 0 les heures d'un membre ou de tout le monde (Administrateurs uniquement)")
+@app_commands.describe(membre="Le membre à remettre à 0 (laisse vide pour tout le monde)")
 @app_commands.default_permissions(administrator=True)
-async def clear_cmd(interaction: discord.Interaction):
+async def clear_cmd(interaction: discord.Interaction, membre: discord.Member = None):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(
             "❌ Seuls les administrateurs peuvent utiliser cette commande.",
@@ -210,14 +211,24 @@ async def clear_cmd(interaction: discord.Interaction):
         return
 
     await interaction.response.defer()
-
-    sauvegarder_donnees({})
-
     maintenant = time.time()
-    for user_id in list(sessions_actives.keys()):
-        sessions_actives[user_id] = maintenant
 
-    await interaction.followup.send("🔄 **Toutes les heures de vocal ont été remises à 0 !**")
+    if membre is not None:
+        user_id_str = str(membre.id)
+        donnees = charger_donnees()
+        donnees.pop(user_id_str, None)
+        sauvegarder_donnees(donnees)
+
+        if user_id_str in sessions_actives:
+            sessions_actives[user_id_str] = maintenant
+
+        await interaction.followup.send(f"🔄 **Les heures de vocal de {membre.display_name} ont été remises à 0 !**")
+    else:
+        sauvegarder_donnees({})
+        for user_id in list(sessions_actives.keys()):
+            sessions_actives[user_id] = maintenant
+
+        await interaction.followup.send("🔄 **Toutes les heures de vocal ont été remises à 0 !**")
 
 @bot.tree.command(name="ajt", description="Ajoute des heures ou des minutes de vocal à un membre (Administrateurs uniquement)")
 @app_commands.describe(
